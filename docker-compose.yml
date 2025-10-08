@@ -1,0 +1,16 @@
+services:
+  sim:
+    build: .
+    image: blackjack-sim:cpu
+    container_name: bj-sim
+    command: ["python", "src/main.py", "--config", "configs/8deck_50p.yml"]
+    working_dir: /app
+    environment:
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/app/src
+      - DISABLE_DOUBLE=0      # first run: force no doubles
+      - USE_BASIC_ONLY=1      # first run: force basic chart (bypasses DP)
+    volumes:
+      - ./src:/app/src:rw
+      - ./configs:/app/configs:ro
+      - ./results:/app/results:rw
