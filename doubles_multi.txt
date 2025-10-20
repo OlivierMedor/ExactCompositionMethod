@@ -1,0 +1,12 @@
+== SEED 41 ==
+lift in [0.000,0.020):  1273  avg(real-best)=+0.00000
+ALL doubles avg(real-best): +0.00000
+== SEED 42 ==
+lift in [0.000,0.020):  1327  avg(real-best)=+0.00000
+ALL doubles avg(real-best): +0.00000
+== SEED 43 ==
+lift in [0.000,0.020):  1336  avg(real-best)=+0.00000
+ALL doubles avg(real-best): +0.00000
+== SEED 44 ==
+lift in [0.000,0.020):  1323  avg(real-best)=+0.00000
+ALL doubles avg(real-best): +0.00000

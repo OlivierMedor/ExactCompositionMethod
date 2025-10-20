@@ -1,103 +1,109 @@
-from __future__ import annotations
-import os, torch
-from typing import Optional, Tuple
+# src/gpu_pmf.py
+from typing import Tuple, Dict, List
+import torch
 
-def _device():
-    use = os.environ.get("USE_GPU", "0") == "1"
-    return torch.device("cuda") if (use and torch.cuda.is_available()) else torch.device("cpu")
+def _rank_val(idx: int) -> int:
+    # 0..9 => A,2,3,4,5,6,7,8,9,T
+    if idx == 0:
+        return 11
+    elif 1 <= idx <= 8:
+        return idx + 1
+    else:
+        return 10
 
-def _rank_vals(device):
-    # idx: 0=A(11), 1..8 -> 2..9, 9..12 -> 10
-    return torch.tensor([11,2,3,4,5,6,7,8,9,10,10,10,10], dtype=torch.int32, device=device)
+def _add_rank(total: int, soft: bool, r_idx: int) -> Tuple[int, bool]:
+    t = total + _rank_val(r_idx)
+    s = soft or (r_idx == 0)
+    if t > 21 and s:
+        t -= 10
+        s = False
+    return t, s
 
-@torch.no_grad()
-def dealer_pmf_single(counts_key: Tuple[int,...],
-                      up_idx: int,
-                      hit_s17: bool,
-                      hole_constraint: Optional[str]) -> Tuple[float,float,float,float,float,float]:
+def dealer_pmf_single(
+    counts_key: Tuple[int, ...],
+    up_idx: int,
+    hit_s17: bool,
+    hole_constraint: int = 0,  # 0=None, 1=NOT_TEN, 2=NOT_ACE
+    max_nodes: int = 2_000_000,
+    device: torch.device | None = None,
+) -> Dict[int, float]:
     """
-    Dealer PMF over (bust,17,18,19,20,21) for a single state on GPU.
-    counts_key: tuple of 13 remaining-card counts.
+    Compute dealer PMF given post-deal deck, dealer upcard, and peek constraint.
+    Peek mask is applied to the FIRST dealer draw only (hole card).
+    Returns a dict: {17..21: p, 22: p_bust}.
     """
-    device = _device()
-    vals = _rank_vals(device)
-    counts = torch.tensor(counts_key, dtype=torch.int32, device=device)
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    # Allowed holes per peek constraint
-    allowed = counts.clone().to(torch.float32)
-    if hole_constraint == "not_ten":
-        allowed[9:13] = 0
-    elif hole_constraint == "not_ace":
-        allowed[0] = 0
+    base_counts = torch.tensor(list(counts_key), dtype=torch.int32, device=device)
 
-    total_allowed = allowed.sum().item()
-    if total_allowed <= 0:
-        # Stand on upcard only (degenerate)
-        total0 = int(vals[up_idx].item())
-        soft0  = (up_idx == 0)
-        return _pmf_from_total(counts, total0, soft0, vals, hit_s17)
+    start_total = _rank_val(up_idx)
+    start_soft = (up_idx == 0)
 
-    pmf_sum = torch.zeros(6, dtype=torch.float64, device=device)
-    for r in range(13):
-        w = allowed[r].item()
-        if w <= 0: 
-            continue
-        p_hole = w / total_allowed
-        # Remove one hole
-        counts[r] -= 1
-        total0 = int(vals[up_idx].item() + vals[r].item())
-        soft0  = (up_idx == 0) or (r == 0)
-        pmf = _pmf_from_total(counts, total0, soft0, vals, hit_s17)  # (6,)
-        pmf_sum += p_hole * pmf
-        counts[r] += 1
+    # frontier: (prob, total, soft, counts_tensor, mask_left_bool)
+    mask_left = (hole_constraint != 0)
+    frontier: List[Tuple[float, int, bool, torch.Tensor, bool]] = [
+        (1.0, start_total, start_soft, base_counts, mask_left)
+    ]
 
-    return tuple(float(x) for x in pmf_sum.tolist())
-
-def _pmf_from_total(counts: torch.Tensor,
-                    total0: int,
-                    soft0: bool,
-                    vals: torch.Tensor,
-                    hit_s17: bool) -> torch.Tensor:
-    """
-    Iterative expansion of dealer draw-to-17+; returns tensor (6,) = (bust,17..21).
-    """
-    counts_f = counts.to(torch.float32)
-    pmf = torch.zeros(6, dtype=torch.float32, device=counts.device)
-    frontier = [(1.0, total0, soft0)]
+    pmf: Dict[int, float] = {}
 
     while frontier:
-        prob, total, soft = frontier.pop()
-        if total > 21:
-            pmf[0] += prob; continue
-        stand = (total >= 17) and not (hit_s17 and (total == 17 and soft))
-        if stand:
-            if 17 <= total <= 21:
-                pmf[total - 16 - 1] += prob  # 17->idx1 ... 21->idx5
+        prob, total, soft, counts, mask_left = frontier.pop()
+
+        # Standing rules
+        if total >= 17:
+            if total > 21:
+                pmf[22] = pmf.get(22, 0.0) + prob
+                continue
+            if not (hit_s17 and soft and total == 17):
+                pmf[total] = pmf.get(total, 0.0) + prob
+                continue
+
+        # View for probabilities (apply peek mask only once, to the hole draw)
+        avail = counts.clone()
+        if mask_left:
+            if hole_constraint == 1:   # NOT_TEN
+                avail[9] = 0
+            elif hole_constraint == 2: # NOT_ACE
+                avail[0] = 0
+
+        total_cards = int(avail.sum().item())
+        if total_cards == 0:
+            if total > 21:
+                pmf[22] = pmf.get(22, 0.0) + prob
             else:
-                pmf[0] += prob
+                pmf[total] = pmf.get(total, 0.0) + prob
             continue
 
-        total_cards = counts_f.sum().item()
-        if total_cards <= 0:
-            if 17 <= total <= 21:
-                pmf[total - 16 - 1] += prob
-            else:
-                pmf[0] += prob
-            continue
-
-        for r in range(13):
-            c = counts_f[r].item()
-            if c <= 0: 
+        for r in range(10):
+            c = int(avail[r].item())
+            if c == 0:
                 continue
             p = prob * (c / total_cards)
-            v = int(vals[r].item())
-            new_total = total + v
-            new_soft = soft or (r == 0)
-            if new_total > 21 and new_soft:
-                new_total -= 10
-                new_soft = False
-            counts_f[r] -= 1.0
-            frontier.append((p, new_total, new_soft))
-            counts_f[r] += 1.0
 
-    return pmf.to(torch.float64)
+            counts_f = counts.clone()
+            counts_f[r] -= 1
+
+            nt, ns = _add_rank(total, soft, r)
+
+            # After the *first* dealer draw, clear the peek mask
+            child_mask_left = False if mask_left else False
+
+            if len(frontier) < max_nodes:
+                frontier.append((p, nt, ns, counts_f, child_mask_left))
+            else:
+                # Rare safety valve
+                if nt > 21:
+                    pmf[22] = pmf.get(22, 0.0) + p
+                elif not (hit_s17 and ns and nt == 17) and nt >= 17:
+                    pmf[nt] = pmf.get(nt, 0.0) + p
+                else:
+                    bucket = max(17, min(21, nt))
+                    pmf[bucket] = pmf.get(bucket, 0.0) + p
+
+    s = sum(pmf.values())
+    if s > 0:
+        for k in list(pmf.keys()):
+            pmf[k] /= s
+    return pmf

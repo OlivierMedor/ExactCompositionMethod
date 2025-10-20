@@ -8,5 +8,4 @@ name = "rustcore"
 crate-type = ["cdylib"]
 
 [dependencies]
-pyo3 = { version = "0.20.0", features = ["extension-module"] }
-rand = "0.8.5"
+pyo3 = { version = "0.21", features = ["extension-module"] }

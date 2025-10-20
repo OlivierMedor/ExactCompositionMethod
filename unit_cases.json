@@ -1,0 +1,6 @@
+[
+  {"r1":"5","r2":"6","up":"6","seen":"","expect":"double"},
+  {"r1":"T","r2":"2","up":"4","seen":"","expect":"stand"},
+  {"r1":"9","r2":"2","up":"7","seen":"","expect":"double"},
+  {"r1":"A","r2":"7","up":"9","seen":"","expect":"hit"}
+]

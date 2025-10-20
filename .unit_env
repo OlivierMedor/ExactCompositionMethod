@@ -1,0 +1,7 @@
+UNIT_CASES=[  {"r1":"T","r2":"2","up":"4","seen":"","expect":"stand"},  {"r1":"5","r2":"6","up":"6","seen":"","expect":"double"},  {"r1":"9","r2":"2","up":"7","seen":"","expect":"double"},  {"r1":"A","r2":"7","up":"9","seen":"","expect":"hit"}]
+UNIT_TIE_EPS=1e-9
+UNIT_DOUBLE_MARGIN=0.02
+UNIT_PREFER_DOUBLE_ON_TIE=1
+UNIT_USE_DP_HIT=1
+UNIT_DP_DEPTH=3
+UNIT_FORCE_SLOW_DOUBLE=1
