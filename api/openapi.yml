@@ -1,0 +1,404 @@
+openapi: 3.1.0
+info:
+  title: Exact-Deck Blackjack Live Play API
+  version: 1.0.0
+  description: >
+    Stateful, exact-deck blackjack decision API. Client keeps the server's shoe in sync by
+    applying newly visible cards; server returns deck-aware, per-stake EVs and best actions.
+servers:
+  - url: https://api.example.com
+tags:
+  - name: Game
+  - name: Counts
+  - name: Decision
+  - name: Insurance
+
+paths:
+  /v1/game/start:
+    post:
+      tags: [Game]
+      summary: Start a new game (fresh shoe) and return a game_key
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameStartRequest'
+            examples:
+              startFiniteCut:
+                value:
+                  num_decks: 8
+                  rules:
+                    h17: true
+                    bj_payout: 1.5
+                    late_surrender: false
+                    das: true
+                    max_splits: 3
+                    split_aces_one: true
+                    peek_rule: US
+                  shoe_mode:
+                    type: finite_cut        # or "round_fresh"
+                  table:
+                    min_unit: 1
+                    max_unit: 100
+      responses:
+        '200':
+          description: Game created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameStartResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+  /v1/game/end:
+    post:
+      tags: [Game]
+      summary: End a game and free server-side resources
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GameEndRequest'
+            examples:
+              end:
+                value: { game_key: "g_01J8Y6…" }
+      responses:
+        '200':
+          description: Game ended (idempotent)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GameEndResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/counts/apply:
+    post:
+      tags: [Counts]
+      summary: Apply newly visible cards (batch or single) to update the server’s shoe
+      description: Atomic apply—either all cards are applied or none.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CountsApplyRequest'
+            examples:
+              initialDealBatched:
+                value:
+                  game_key: g_01J8Y6…
+                  cards: ["5","6","6"]
+              hitSingle:
+                value:
+                  game_key: g_01J8Y6…
+                  cards: ["3"]
+      responses:
+        '200':
+          description: Counts updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CountsApplyResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/decision:
+    post:
+      tags: [Decision]
+      summary: Get the best action and per-stake EVs for the current hand
+      description: >
+        Uses server-side shoe state bound to game_key. Returns per-stake EVs for stand/hit/double/split/surrender.
+        Peek conditioning (US) is handled internally.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DecisionRequest'
+            examples:
+              double11v6:
+                value:
+                  game_key: g_01J8Y6…
+                  hand:
+                    cards: ["5","6"]
+                    can_double: true
+                    can_split: false
+                    can_surrender: false
+                  dealer_up: "6"
+      responses:
+        '200':
+          description: Decision computed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DecisionResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+  /v1/insurance:
+    post:
+      tags: [Insurance]
+      summary: Decide whether to take insurance (or even money if player has BJ)
+      description: Advisory only; does not mutate shoe. Call when dealer up is Ace.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/InsuranceRequest'
+            examples:
+              insuranceExample:
+                value:
+                  game_key: g_01J8Y6…
+                  dealer_up: "A"
+                  hand: { cards: ["A","T"] }
+      responses:
+        '200':
+          description: Insurance recommendation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InsuranceResponse'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          $ref: '#/components/responses/Conflict'
+
+components:
+  responses:
+    BadRequest:
+      description: Invalid input
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Unknown game_key
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: State conflict (e.g., insufficient cards to apply, inconsistent hand vs shoe)
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ---------- Core value objects ----------
+    Rank:
+      type: string
+      enum: ["A","2","3","4","5","6","7","8","9","T"]
+    Rules:
+      type: object
+      additionalProperties: false
+      properties:
+        h17: { type: boolean }
+        bj_payout: { type: number, minimum: 1.0, default: 1.5 }
+        late_surrender: { type: boolean, default: false }
+        das: { type: boolean, default: true }
+        max_splits: { type: integer, minimum: 0, default: 3 }
+        split_aces_one: { type: boolean, default: true }
+        peek_rule:
+          type: string
+          enum: ["US","EU"]
+          description: US = dealer peeks for BJ with A/T up; EU = no peek.
+      required: ["h17","bj_payout","late_surrender","das","max_splits","split_aces_one","peek_rule"]
+    ShoeMode:
+      type: object
+      additionalProperties: false
+      properties:
+        type:
+          type: string
+          enum: ["finite_cut","round_fresh"]
+      required: ["type"]
+    Table:
+      type: object
+      additionalProperties: false
+      properties:
+        min_unit: { type: integer, minimum: 1 }
+        max_unit: { type: integer, minimum: 1 }
+
+    # ---------- Game lifecycle ----------
+    GameStartRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        num_decks: { type: integer, minimum: 1, default: 8 }
+        rules: { $ref: '#/components/schemas/Rules' }
+        shoe_mode: { $ref: '#/components/schemas/ShoeMode' }
+        table: { $ref: '#/components/schemas/Table' }
+      required: ["num_decks","rules","shoe_mode"]
+    GameStartResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        game_key: { type: string }
+        created_at: { type: string, format: date-time }
+        rules: { $ref: '#/components/schemas/Rules' }
+        shoe:
+          type: object
+          additionalProperties: false
+          properties:
+            num_decks: { type: integer }
+            remaining_cards: { type: integer }
+            counts_hash: { type: string }
+          required: ["num_decks","remaining_cards","counts_hash"]
+        version:
+          type: object
+          properties:
+            api: { type: string }
+            core: { type: string }
+      required: ["game_key","created_at","rules","shoe","version"]
+    GameEndRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        game_key: { type: string }
+      required: ["game_key"]
+    GameEndResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        ok: { type: boolean }
+        ended_at: { type: string, format: date-time }
+      required: ["ok","ended_at"]
+
+    # ---------- Counts apply ----------
+    CountsApplyRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        game_key: { type: string }
+        cards:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/Rank' }
+      required: ["game_key","cards"]
+    CountsApplyResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        ok: { type: boolean }
+        remaining_cards: { type: integer }
+        counts_hash: { type: string }
+        penetration:
+          type: object
+          properties:
+            remaining: { type: integer }
+            initial: { type: integer }
+            ratio: { type: number }
+        shoe_edge:
+          type: object
+          properties:
+            per_wager_ev: { type: number, description: "Expected EV per 1× bet if a NEW hand starts now (optimal play)." }
+            mode:
+              type: string
+              enum: ["pre-deal"]
+      required: ["ok","remaining_cards","counts_hash"]
+
+    # ---------- Decision ----------
+    DecisionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        game_key: { type: string }
+        hand:
+          type: object
+          additionalProperties: false
+          properties:
+            cards:
+              type: array
+              minItems: 1
+              items: { $ref: '#/components/schemas/Rank' }
+            can_double: { type: boolean }
+            can_split: { type: boolean }
+            can_surrender: { type: boolean }
+          required: ["cards","can_double","can_split","can_surrender"]
+        dealer_up: { $ref: '#/components/schemas/Rank' }
+      required: ["game_key","hand","dealer_up"]
+    DecisionResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        action:
+          type: string
+          enum: ["stand","hit","double","split","surrender"]
+        evs:
+          type: object
+          properties:
+            stand: { type: number, nullable: true }
+            hit: { type: number, nullable: true }
+            double: { type: number, nullable: true, description: "Per-stake; normalized by server if core returns ±2." }
+            split: { type: number, nullable: true, description: "Per original stake (average over resulting hands)." }
+            surrender: { type: number, nullable: true }
+        meta:
+          type: object
+          properties:
+            peek_mode: { type: string, enum: ["US","EU"] }
+            conditioning: { type: string, enum: ["no-dealer-BJ","unconditioned"] }
+            p_bj: { type: number, description: "P(dealer BJ) before action from current counts." }
+            rules: { $ref: '#/components/schemas/Rules' }
+            version:
+              type: object
+              properties:
+                core: { type: string }
+                api: { type: string }
+      required: ["action","evs","meta"]
+
+    # ---------- Insurance ----------
+    InsuranceRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        game_key: { type: string }
+        dealer_up: { $ref: '#/components/schemas/Rank' }
+        hand:
+          type: object
+          additionalProperties: false
+          properties:
+            cards:
+              type: array
+              minItems: 2
+              items: { $ref: '#/components/schemas/Rank' }
+      required: ["game_key","dealer_up"]
+    InsuranceResponse:
+      type: object
+      additionalProperties: false
+      properties:
+        recommendation:
+          type: string
+          enum: ["take","decline","not_applicable"]
+        ev:
+          type: object
+          properties:
+            per_original: { type: number }
+            per_insurance: { type: number }
+        meta:
+          type: object
+          properties:
+            p_bj: { type: number }
+            break_even_p: { type: number, default: 0.3333333333 }
+            insurance_bet_fraction: { type: number, default: 0.5 }
+            peek_mode: { type: string, enum: ["US","EU"] }
+            even_money_equivalent: { type: boolean }
+        version:
+          type: object
+          properties:
+            core: { type: string }
+            api: { type: string }
+      required: ["recommendation","ev","meta","version"]
+
+    # ---------- Errors ----------
+    Error:
+      type: object
+      additionalProperties: false
+      properties:
+        error: { type: string }
+        detail: { type: string }

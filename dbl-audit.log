@@ -1,9 +1,0 @@
-==============================================
-BLACKJACK: LIVE EXACT-COMPOSITION (US PEEK)
-==============================================
-NUM_HANDS=600  DECKS=8.0  H17=true  BJ=1.5:1
-DAS=true  SPLIT_ACES_ONE=true  MAX_SPLITS=0  DOUBLE_AFTER_SPLIT=true
-DISABLE_DOUBLE=false  INSURANCE=false  DP_DEPTH=3  LRU=1200  SLICE=5
-...progress 25/600 | AvgEV=-0.200000
-...progress 50/600 | AvgEV=-0.060000
-...progress 75/600 | AvgEV=-0.066667

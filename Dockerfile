@@ -1,34 +1,15 @@
-# Dockerfile for the final Python + Rust solution
+﻿# Dockerfile (multi-stage)
+FROM ghcr.io/pyo3/maturin:v1.7.1 AS rust-build
+WORKDIR /io
+COPY src/rustcore/ /io/
+RUN maturin build --release -i python3.11 --compatibility manylinux2014 --out /dist
 
-# --- Builder Stage for Rust Compilation ---
-FROM python:3.11-slim as rust-builder
-
-# Install Rust and build tools
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl build-essential pkg-config ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
-    
-RUN curl https://sh.rustup.rs -sSf | sh -s -- -y --profile minimal
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-# Install maturin to build the Python wheel from Rust
-RUN python -m pip install --no-cache-dir "maturin>=1.5,<2.0"
-
-# Build the Rust core
-WORKDIR /app/rustcore
-COPY src/rustcore/ ./
-RUN maturin build --release -i python3.11
-
-# --- Final Python Stage ---
 FROM python:3.11-slim
-
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 USE_RUST_CORE=1 PYTHONPATH=/app
 WORKDIR /app
-
-# Copy the compiled wheel from the builder and install it
-COPY --from=rust-builder /app/rustcore/target/wheels/*.whl /tmp/
+COPY src/ /app/src/
+RUN python -m pip install --no-cache-dir fastapi uvicorn "pydantic>=2,<3"
+COPY --from=rust-build /dist/*.whl /tmp/
 RUN python -m pip install --no-cache-dir /tmp/*.whl && rm -f /tmp/*.whl
-
-# Copy the Python driver script
-COPY src/main.py /app/src/main.py
-
-CMD ["python", "-u", "src/main.py"]
+EXPOSE 8000
+CMD ["python", "-m", "src.app"]
